@@ -1,30 +1,41 @@
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
+import Database from "better-sqlite3";
+import { drizzle } from "drizzle-orm/better-sqlite3";
 import { createApp } from "./app.js";
-import { createDb } from "./db/connection.js";
-import { existsSync, readFileSync } from "fs";
-import { resolve } from "path";
+import { categories } from "./db/schema.js";
+import * as schema from "./db/schema.js";
+import { existsSync, readFileSync, mkdirSync } from "fs";
+import { resolve, dirname } from "path";
 
-// Initialize database
-const db = createDb();
+// ── Database setup ──
+const dbPath = process.env.DATABASE_URL || "./data/todo.db";
+const dir = dirname(dbPath);
+if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
-// Run migrations on startup
-const migrationPath = resolve(
-  import.meta.dirname || ".",
-  "../migrations/0000_init.sql"
+const sqlite = new Database(dbPath);
+sqlite.pragma("journal_mode = WAL");
+sqlite.pragma("foreign_keys = ON");
+
+const db = drizzle(sqlite, { schema });
+
+// ── Run migrations directly with better-sqlite3 ──
+const migrationDir = resolve(
+  import.meta.dirname || new URL(".", import.meta.url).pathname,
+  "../migrations"
 );
-if (existsSync(migrationPath)) {
-  const migrationSql = readFileSync(migrationPath, "utf-8");
+const migrationFile = resolve(migrationDir, "0000_init.sql");
+
+if (existsSync(migrationFile)) {
+  const migrationSql = readFileSync(migrationFile, "utf-8");
   const statements = migrationSql
     .split(";")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 
-  // Access the underlying better-sqlite3 instance
-  const rawDb = (db as any)._.session.client;
   for (const stmt of statements) {
     try {
-      rawDb.exec(stmt);
+      sqlite.exec(stmt);
     } catch (e) {
       // Ignore "already exists" errors
     }
@@ -32,8 +43,7 @@ if (existsSync(migrationPath)) {
   console.log("✓ Database migrations applied");
 }
 
-// Seed default categories
-import { categories } from "./db/schema.js";
+// ── Seed default categories ──
 const defaultCategories = [
   { id: "work", name: "Trabajo", color: "#6366f1", icon: "💼", position: 0 },
   { id: "personal", name: "Personal", color: "#f43f5e", icon: "🏠", position: 1 },
@@ -50,10 +60,10 @@ for (const cat of defaultCategories) {
 }
 console.log("✓ Default categories ready");
 
-// Create Hono app
+// ── Create Hono app ──
 const app = createApp(db);
 
-// Serve static frontend files in production
+// ── Serve static frontend ──
 const staticDir = process.env.STATIC_DIR || "../web/dist";
 app.use(
   "/*",
@@ -62,7 +72,7 @@ app.use(
   })
 );
 
-// SPA fallback - serve index.html for client-side routing
+// SPA fallback
 app.get("*", (c) => {
   try {
     const indexPath = resolve(staticDir, "index.html");
