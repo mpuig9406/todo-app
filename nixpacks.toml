@@ -1,5 +1,6 @@
 [phases.setup]
-nixPkgs = ["nodejs_20", "pnpm"]
+nixPkgs = ["nodejs_20", "pnpm", "python3", "gcc", "gnumake", "pkg-config"]
+aptPkgs = ["build-essential"]
 
 [phases.install]
 cmds = ["pnpm install"]
